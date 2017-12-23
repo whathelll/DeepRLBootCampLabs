@@ -15,6 +15,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 """
 
+import os.path, sys
+sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir))
 
 from collections import deque
 
@@ -118,7 +120,7 @@ class NN(object):
         for i, (w, b) in enumerate(zip(self.lst_w, self.lst_b)):
             x = F.linear(x, w, b)
             if i != len(self.lst_w) - 1:
-                x = F.tanh(x)
+                x = F.relu(x)
             else:
                 return self._out_fn(x)
 
@@ -204,7 +206,21 @@ class DQN(object):
         # Hint: You may want to make use of the following fields: self._discount, self._q, self._qt
         # Hint2: Q-function can be called by self._q.forward(argument)
         # Hint3: You might also find https://docs.chainer.org/en/stable/reference/generated/chainer.functions.select_item.html useful
-        loss = C.Variable(np.array([0.]))  # TODO: replace this line
+
+        # print(l_obs.shape)
+        # print(l_act.shape)
+        Q = self._q.forward(l_obs)
+        QT = self._qt.forward(l_next_obs)
+        # print(Q.shape)
+        y = l_rew + (1 - l_done) * self._discount * F.max(QT, axis=1)
+        # print(y.shape)
+
+        # print(y.shape, QT.shape)
+        q = F.select_item(Q, l_act)
+
+        loss = F.mean_squared_error(y, q)
+        # print(loss)
+        # loss = C.Variable(np.array([0.]))  # TODO: replace this line
         "*** YOUR CODE HERE ***"
         return loss
 
@@ -222,7 +238,14 @@ class DQN(object):
         # Hint: You may want to make use of the following fields: self._discount, self._q, self._qt
         # Hint2: Q-function can be called by self._q.forward(argument)
         # Hint3: You might also find https://docs.chainer.org/en/stable/reference/generated/chainer.functions.select_item.html useful
-        loss = C.Variable(np.array([0.]))  # TODO: replace this line
+        Q = self._q.forward(l_obs)
+        QT = self._qt.forward(l_next_obs)
+        best_action = F.argmax(self._q.forward(l_next_obs), axis=1)
+        y = l_rew + (1 - l_done) * self._discount * F.select_item(QT, best_action)
+        q = F.select_item(Q, l_act)
+
+        loss = F.mean_squared_error(y, q)
+        # loss = C.Variable(np.array([0.]))  # TODO: replace this line
         "*** YOUR CODE HERE ***"
         return loss
 
@@ -361,7 +384,7 @@ def main(env_id, double, render):
     env.seed(42)
 
     # Initialize the replay buffer that we will use.
-    replay_buffer = ReplayBuffer(max_size=10000)
+    replay_buffer = ReplayBuffer(max_size=1000000)
 
     # Initialize DQN training procedure.
     dqn = DQN(
@@ -373,7 +396,7 @@ def main(env_id, double, render):
 
         # Q-value parameters
         q_dim_hid=[256, 256] if env_id == 'Pong-ram-v0' else [],
-        opt_batch_size=64,
+        opt_batch_size=256,
 
         # DQN gamma parameter
         discount=0.99,
@@ -392,7 +415,7 @@ def main(env_id, double, render):
         # Exploration parameters
         initial_eps=1.0,
         final_eps=0.05,
-        fraction_eps=0.1,
+        fraction_eps=0.01,
 
         # Logging
         log_freq=log_freq,
