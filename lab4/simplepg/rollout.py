@@ -13,6 +13,8 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 """
 
+import os.path, sys
+sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir))
 
 import click
 import numpy as np

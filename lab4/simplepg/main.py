@@ -13,6 +13,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 """
 
+import os.path, sys
+sys.path.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir))
+
 
 from collections import defaultdict
 import numpy as np
@@ -36,6 +39,7 @@ def point_get_logp_action(theta, ob, action):
     ob_1 = include_bias(ob)
     mean = theta.dot(ob_1)
     zs = action - mean
+    print(np.log(2*np.pi), theta.shape, np.sum(np.square(zs)))
     return -0.5 * np.log(2 * np.pi) * theta.shape[0] - 0.5 * np.sum(np.square(zs))
 
 
@@ -46,7 +50,13 @@ def point_get_grad_logp_action(theta, ob, action):
     :param action: A vector of size |A|
     :return: A matrix of size |A| * (|S|+1)
     """
-    grad = np.zeros_like(theta)
+    # grad = np.zeros_like(theta)
+    ob_1 = include_bias(ob)
+    mean = theta.dot(ob_1)
+    zs = action - mean
+    grad = np.outer(zs, ob_1)
+
+    # print(grad.shape)
     "*** YOUR CODE HERE ***"
     return grad
 
@@ -114,6 +124,12 @@ def cartpole_get_grad_logp_action(theta, ob, action):
     """
     grad = np.zeros_like(theta)
     "*** YOUR CODE HERE ***"
+    a = np.zeros(theta.shape[0])
+    a[action] = 1
+    p = softmax(compute_logits(theta, ob))
+    ob_1 = include_bias(ob)
+
+    grad = np.outer(a - p, ob_1)
     return grad
 
 
@@ -245,9 +261,11 @@ def main(env_id, batch_size, discount, learning_rate, n_itrs, render, use_baseli
                     matrix of size |A| * (|S|+1) )
                     :return: A tuple, consisting of a scalar and a matrix of size |A| * (|S|+1)
                     """
-                    R_t = 0.
-                    pg_theta = np.zeros_like(theta)
+
+                    R_t = discount*R_tplus1 + r_t
+                    pg_theta = get_grad_logp_action(theta, s_t, a_t)*(R_t - b_t)
                     "*** YOUR CODE HERE ***"
+
                     return R_t, pg_theta
 
                 # Test the implementation, but only once
@@ -279,6 +297,8 @@ def main(env_id, batch_size, discount, learning_rate, n_itrs, render, use_baseli
             baselines = np.zeros(len(all_returns))
             for t in range(len(all_returns)):
                 "*** YOUR CODE HERE ***"
+                if len(all_returns[t]) > 0:
+                    baselines[t] = np.mean(all_returns[t])
             return baselines
 
         if use_baseline:

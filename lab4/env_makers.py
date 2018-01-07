@@ -22,8 +22,8 @@ import gym.envs.registration
 from gym.envs.atari.atari_env import AtariEnv
 import logger
 import os
-import roboschool
-import tempfile
+# import roboschool
+# import tempfile
 import gym.wrappers.monitoring
 
 # Silence the log messages
