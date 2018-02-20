@@ -1,4 +1,3 @@
-
 from pysc2.agents.base_agent import BaseAgent
 
 from utils.epsilon import Epsilon
@@ -6,6 +5,7 @@ import time
 import math
 import numpy as np
 import copy
+import os.path
 from utils.replay_memory import ReplayMemory, Transition
 from collections import deque
 import matplotlib.pyplot as plt
@@ -41,17 +41,16 @@ _SELECT_POINT = actions.FUNCTIONS.select_point.id
 class DQNCNN(nn.Module):
   def __init__(self, *args):
     super(DQNCNN, self).__init__(*args)
-    self.conv1 = nn.Conv2d(17, 10, kernel_size=3, stride=1, padding=1)
-    self.conv2 = nn.Conv2d(10, 10, kernel_size=3, stride=1, padding=2, dilation=2)
-    self.conv3 = nn.Conv2d(10, 10, kernel_size=3, stride=1, padding=4, dilation=4)
-    self.conv4 = nn.Conv2d(10, 1, kernel_size=3, stride=1, padding=8, dilation=8)
+    self.conv1 = nn.Conv2d(1, 24, kernel_size=3, stride=1, padding=1)
+    self.conv2 = nn.Conv2d(24, 24, kernel_size=3, stride=1, padding=2, dilation=2)
+    self.conv3 = nn.Conv2d(24, 1, kernel_size=3, stride=1, padding=4, dilation=4)
+    # self.conv4 = nn.Conv2d(24, 1, kernel_size=3, stride=1, padding=8, dilation=8)
 
   def forward(self, x):
     x = F.relu(self.conv1(x))
     x = F.relu(self.conv2(x))
-    x = F.relu(self.conv3(x))
-    x = F.relu(self.conv4(x))
-
+    # x = F.relu(self.conv3(x))
+    x = self.conv3(x)
     return x
 
 
@@ -59,36 +58,42 @@ class BaseRLAgent(BaseAgent):
   def __init__(self):
     super(BaseRLAgent, self).__init__()
     self.training = False
-    self.max_frames = 5000000
-    self._epsilon = Epsilon(start=1.0, end=0.05, update_increment=0.0001)
+    self.max_frames = 500000
+    self._epsilon = Epsilon(start=0.1, end=0.1, update_increment=0.01)
     self.gamma = 0.99
     self.train_q_per_step = 4
     self.train_q_batch_size = 256
-    self.steps_before_training = 1000
-    self.target_q_update_frequency = 100
+    self.steps_before_training = 10000
+    self.target_q_update_frequency = 10000
 
-
+    self._Q_weights_path = "./data/SC2QAgent"
     self._Q = DQNCNN()
+    if os.path.isfile(self._Q_weights_path):
+      self._Q.load_state_dict(torch.load(self._Q_weights_path))
     self._Qt = copy.deepcopy(self._Q)
     self._Q.cuda()
     self._Qt.cuda()
     self._optimizer = optim.Adam(self._Q.parameters(), lr=1e-8)
     self._criterion = nn.MSELoss()
-    self._loss = deque(maxlen=100)
+    self._memory = ReplayMemory(200000)
+
+    self._loss = deque(maxlen=1000)
+    self._max_q = deque(maxlen=1000)
+    self._action = None
+    self._screen = None
     self._fig = plt.figure()
-    self._plot = plt.subplot(1, 1, 1)
-    self._memory = ReplayMemory(100000)
-    self._screen_size = 16
+    self._plot = [plt.subplot(2, 2, i+1) for i in range(4)]
+
+    self._screen_size = 28
 
   def get_env_action(self, action, obs):
     action = np.unravel_index(action, [1, self._screen_size, self._screen_size])
-    target = action[1:]
-    command = action[0]
-    if command == 0:
-      # command = _SELECT_POINT
-      command = _MOVE_SCREEN  # removing unit selection out of the equation
-    else:
-      command = _MOVE_SCREEN
+    target = [action[2], action[1]]
+    command = _MOVE_SCREEN #action[0]   # removing unit selection out of the equation
+    # if command == 0:
+    #   command = _SELECT_POINT
+    # else:
+    #   command = _MOVE_SCREEN
 
     if command in obs.observation["available_actions"]:
       return actions.FunctionCall(command, [[0], target])
@@ -100,8 +105,7 @@ class BaseRLAgent(BaseAgent):
     :param 
       s = obs.observation["screen"]
     :returns
-      action - _SELECT_POINT or _MOVE_SCREEN
-      target - [x, y]
+      action = argmax action
   '''
   def get_action(self, s):
     # greedy
@@ -109,8 +113,8 @@ class BaseRLAgent(BaseAgent):
       # print("greedy action")
       s = Variable(torch.from_numpy(s).cuda())
       s = s.unsqueeze(0).float()
-      out = self._Q(s).squeeze().cpu().data.numpy()
-      return out.argmax()
+      self._action = self._Q(s).squeeze().cpu().data.numpy()
+      return self._action.argmax()
     # explore
     else:
       # print("random choice")
@@ -126,9 +130,11 @@ class BaseRLAgent(BaseAgent):
     return actions.FunctionCall(_SELECT_POINT, [[0], target])
 
 
-  def train(self, env):
-    self._epsilon.isTraining = True
+  def train(self, env, training=True):
+    self._epsilon.isTraining = training
     self.run_loop(env, self.max_frames)
+    if self._epsilon.isTraining:
+      torch.save(self._Q.state_dict(), self._Q_weights_path)
 
   def run_loop(self, env, max_frames=0):
     """A run loop to have agents and an environment interact."""
@@ -146,13 +152,15 @@ class BaseRLAgent(BaseAgent):
         # remove unit selection from the equation by selecting the friendly on every new game.
         select_friendly = self.select_friendly_action(obs)
         obs = env.step([select_friendly])[0]
+        # distance = self.get_reward(obs.observation["screen"])
 
         self.reset()
 
         while True:
           total_frames += 1
 
-          s = obs.observation["screen"]
+          self._screen = obs.observation["screen"][5]
+          s = np.expand_dims(obs.observation["screen"][5], 0)
           # plt.imshow(s[5])
           # plt.pause(0.00001)
           if max_frames and total_frames >= max_frames:
@@ -167,23 +175,24 @@ class BaseRLAgent(BaseAgent):
           env_actions = self.get_env_action(action, obs)
           obs = env.step([env_actions])[0]
 
-          # r = obs.reward
-          s1 = obs.observation["screen"]
-          r = self.get_reward(s1)
-          done = obs.last()
-          transition = Transition(s, action, s1, r, done)
-          if r > 0:
-            print("reward is greater than 1")
-          self._memory.push(transition)
+          r = obs.reward
+          s1 = np.expand_dims(obs.observation["screen"][5], 0)
+          done = r > 0
+          if self._epsilon.isTraining:
+            transition = Transition(s, action, s1, r, done)
+            self._memory.push(transition)
 
-          if total_frames % self.train_q_per_step == 0 and total_frames > self.steps_before_training:
+          if total_frames % self.train_q_per_step == 0 and total_frames > self.steps_before_training and self._epsilon.isTraining:
             self.train_q()
             # pass
 
-          if total_frames % self.target_q_update_frequency == 0 and total_frames > self.steps_before_training:
+          if total_frames % self.target_q_update_frequency == 0 and total_frames > self.steps_before_training and self._epsilon.isTraining:
             self._Qt = copy.deepcopy(self._Q)
             self.show_chart()
             # pass
+
+          if not self._epsilon.isTraining and total_frames % 3 == 0:
+            self.show_chart()
 
     except KeyboardInterrupt:
       pass
@@ -208,17 +217,23 @@ class BaseRLAgent(BaseAgent):
 
 
   def show_chart(self):
-    # plt.figure(figsize=(15,10))
-    # plt.subplot(2, 2, 1)
-    # plt.xlabel('Episode')
-    # plt.ylabel('Duration')
-    # plt.plot(learner.episode_rewards)
-    # plt.subplot(2, 2, 1)
-    self._plot.clear()
-    # plt.pause(0.00001)
-    plt.xlabel('Last 1000 Training Cycles')
-    plt.ylabel('Loss')
-    self._plot.plot(list(self._loss))
+    self._plot[0].clear()
+    self._plot[0].set_xlabel('Last 1000 Training Cycles')
+    self._plot[0].set_ylabel('Loss')
+    self._plot[0].plot(list(self._loss))
+
+    self._plot[1].clear()
+    self._plot[1].set_xlabel('Last 1000 Training Cycles')
+    self._plot[1].set_ylabel('Max Q')
+    self._plot[1].plot(list(self._max_q))
+
+    self._plot[2].clear()
+    self._plot[2].set_title("screen")
+    self._plot[2].imshow(self._screen)
+
+    self._plot[3].clear()
+    self._plot[3].set_title("action")
+    self._plot[3].imshow(self._action)
     plt.pause(0.00001)
 
   def train_q(self):
@@ -248,7 +263,8 @@ class BaseRLAgent(BaseAgent):
     y.volatile = False
 
     loss = self._criterion(Q, y)
-    self._loss.append(loss.cpu().data.numpy().sum())
+    self._loss.append(loss.sum().cpu().data.numpy())
+    self._max_q.append(Q.max().cpu().data.numpy()[0])
     self._optimizer.zero_grad()   # zero the gradient buffers
     loss.backward()
     self._optimizer.step()

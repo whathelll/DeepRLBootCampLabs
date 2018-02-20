@@ -14,7 +14,8 @@ from sc2_agents.base_rl_agent import BaseRLAgent as Agent
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool("render", True, "Whether to render with pygame.")
-flags.DEFINE_integer("screen_resolution", 16,
+flags.DEFINE_bool("train", False, "Whether we are training or running")
+flags.DEFINE_integer("screen_resolution", 28,
                      "Resolution for screen feature layers.")
 flags.DEFINE_integer("minimap_resolution", 64,
                      "Resolution for minimap feature layers.")
@@ -53,7 +54,7 @@ def run_thread(map_name, visualize):
     env = available_actions_printer.AvailableActionsPrinter(env)
     agent = Agent()
     # run_loop([agent], env, FLAGS.max_agent_steps)
-    agent.train(env)
+    agent.train(env, FLAGS.train)
     if FLAGS.save_replay:
       env.save_replay(Agent.__name__)
 
